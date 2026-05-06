@@ -23,7 +23,7 @@ from qgis.PyQt.QtWidgets import QApplication
 
 # For a public bucket; for a private bucket, configure AWS creds instead.
 os.environ.setdefault("AWS_NO_SIGN_REQUEST", "YES")
-os.environ.setdefault("AWS_REGION", "us-east-1")  # adjust if different
+os.environ.setdefault("AWS_REGION", "us-west-2")  # pism-cloud-data lives here
 os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
 
 variables = [ "surface_clipped", "thickness", "bed"]
@@ -134,57 +134,28 @@ def add_layers():
         # "RGI2000-v7.0-C-03-02361",
         # "RGI2000-v7.0-C-03-02392",
         # "RGI2000-v7.0-C-03-02395",
-        # "RGI2000-v7.0-C-01-01407",
-        # "RGI2000-v7.0-C-01-03383",
-        # "RGI2000-v7.0-C-01-04374",
-        # "RGI2000-v7.0-C-01-05334",
-        # "RGI2000-v7.0-C-01-05881",
-        # "RGI2000-v7.0-C-01-06260",
-        # "RGI2000-v7.0-C-01-07967",
-        # "RGI2000-v7.0-C-01-08012",
-        # "RGI2000-v7.0-C-01-08153",
-        # "RGI2000-v7.0-C-01-08314",
-        # "RGI2000-v7.0-C-01-08321",
-        # "RGI2000-v7.0-C-01-08332",
+        "RGI2000-v7.0-C-01-01407",
+        "RGI2000-v7.0-C-01-03383",
+        "RGI2000-v7.0-C-01-04374",
+        "RGI2000-v7.0-C-01-05334",
+        "RGI2000-v7.0-C-01-05881",
+        "RGI2000-v7.0-C-01-06260",
+        "RGI2000-v7.0-C-01-07967",
+        "RGI2000-v7.0-C-01-08012",
+        "RGI2000-v7.0-C-01-08153",
+        "RGI2000-v7.0-C-01-08314",
+        "RGI2000-v7.0-C-01-08321",
+        "RGI2000-v7.0-C-01-08332",
         "RGI2000-v7.0-C-01-09429",
-        # "RGI2000-v7.0-C-01-11818",
-        # "RGI2000-v7.0-C-01-12784",
-        # "RGI2000-v7.0-C-01-14209",
-        # "RGI2000-v7.0-C-01-14612",
+        "RGI2000-v7.0-C-01-11818",
+        "RGI2000-v7.0-C-01-12784",
+        "RGI2000-v7.0-C-01-14209",
+        "RGI2000-v7.0-C-01-14612",
     ]
 
     top_group = root.findGroup("Glaciers") or root.addGroup("Glaciers")
     for i, rgi_id in enumerate(rgi_ids):
         group = top_group.findGroup(rgi_id) or top_group.addGroup(rgi_id)
-
-        v = "surface_clipped"
-        
-        name = f"{rgi_id}_{v}"
-        layer_name = f"{name}_hs"
-        uri = f"/vsis3/{bucket}/{prefix}/{rgi_id}/input/{name}.tif"
-        
-        if any(child.name() == layer_name for child in group.findLayers()):
-            continue
-        
-        layer = QgsRasterLayer(uri, layer_name)
-        if not layer.isValid():
-            print(f"FAIL: {uri}")
-            continue
-        
-        renderer = QgsHillshadeRenderer(
-            layer.dataProvider(),
-            1,  # band number
-            315.0,  # light azimuth (degrees, 0=N, clockwise)
-            45.0,  # light altitude (degrees above horizon)
-        )
-        renderer.setMultiDirectional(True)
-        renderer.setZFactor(2.0)  # bump if your terrain looks too flat
-        layer.setRenderer(renderer)
-        layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
-        _apply_bilinear(layer)
-        layer.triggerRepaint()
-        project.addMapLayer(layer, addToLegend=False)
-        group.addLayer(layer)
 
         v = "thickness"
 
@@ -226,13 +197,19 @@ def add_layers():
         renderer.setClassificationMin(vmin)
         renderer.setClassificationMax(vmax)
         layer.setRenderer(renderer)
+
+        provider = layer.dataProvider()
+        provider.setUserNoDataValue(1, [QgsRasterRange(0, 0)])  # band 1, treat 0 as NoData
+        provider.setUseSourceNoDataValue(1, True)
+        
         _apply_bilinear(layer)
+        layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
 
         layer.triggerRepaint()
         project.addMapLayer(layer, addToLegend=False)
         group.addLayer(layer)
 
-        v = "bed"
+        v = "surface_clipped"
         
         name = f"{rgi_id}_{v}"
         layer_name = f"{name}_hs"
@@ -255,11 +232,6 @@ def add_layers():
         renderer.setMultiDirectional(True)
         renderer.setZFactor(2.0)  # bump if your terrain looks too flat
         layer.setRenderer(renderer)
-        
-        provider = layer.dataProvider()
-        provider.setUserNoDataValue(1, [QgsRasterRange(0, 0)])  # band 1, treat 0 as NoData
-        provider.setUseSourceNoDataValue(1, True)
-
         _apply_bilinear(layer)
         layer.triggerRepaint()
         project.addMapLayer(layer, addToLegend=False)
@@ -304,13 +276,46 @@ def add_layers():
         renderer.setClassificationMin(vmin)
         renderer.setClassificationMax(vmax)
         layer.setRenderer(renderer)
-        layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
         _apply_bilinear(layer)
-
+        layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
         layer.triggerRepaint()
         project.addMapLayer(layer, addToLegend=False)
         group.addLayer(layer)
 
+
+        v = "bed"
+        
+        name = f"{rgi_id}_{v}"
+        layer_name = f"{name}_hs"
+        uri = f"/vsis3/{bucket}/{prefix}/{rgi_id}/input/{name}.tif"
+        
+        if any(child.name() == layer_name for child in group.findLayers()):
+            continue
+        
+        layer = QgsRasterLayer(uri, layer_name)
+        if not layer.isValid():
+            print(f"FAIL: {uri}")
+            continue
+        
+        renderer = QgsHillshadeRenderer(
+            layer.dataProvider(),
+            1,  # band number
+            315.0,  # light azimuth (degrees, 0=N, clockwise)
+            45.0,  # light altitude (degrees above horizon)
+        )
+        renderer.setMultiDirectional(True)
+        renderer.setZFactor(2.0)  # bump if your terrain looks too flat
+        layer.setRenderer(renderer)
+        
+        # provider = layer.dataProvider()
+        # provider.setUserNoDataValue(1, [QgsRasterRange(0, 0)])  # band 1, treat 0 as NoData
+        # provider.setUseSourceNoDataValue(1, True)
+
+        _apply_bilinear(layer)
+        layer.triggerRepaint()
+        project.addMapLayer(layer, addToLegend=False)
+        group.addLayer(layer)
+        
         # for v in variables:
         #     uri = f"/vsis3/{bucket}/{prefix}/{rgi_id}/input/{rgi_id}_{v}.tif"
         #     layer = QgsRasterLayer(uri, f"{rgi_id}_{v}")
@@ -372,11 +377,8 @@ def add_layers():
         #         rf.setZoomedInResampler(QgsBilinearRasterResampler())
         #         rf.setZoomedOutResampler(QgsBilinearRasterResampler())
 
-        #         provider = layer.dataProvider()
-        #         provider.setUserNoDataValue(1, [QgsRasterRange(0, 0)])  # band 1, treat 0 as NoData
-        #         provider.setUseSourceNoDataValue(1, True)
 
-        #         layer.triggerRepaint()
+        #         Layer.triggerRepaint()
         #         project.addMapLayer(layer, addToLegend=False)
         #         group.addLayer(layer)
 
