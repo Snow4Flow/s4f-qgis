@@ -14,4 +14,5 @@ To reduce the initial load time of the project, the layers are not automatically
 
   1. Load a project.
   2. Click on the Snow4Flow icon (the location on your toolbar may vary).
-
+  3. Save your project under a different name to avoid over-writing the version-controlled project. Unless it is your intend to make changes.
+  4. If you accidentally save the version-controlled project, do `git checkout --  modeling-planning-region.qgz` where `region` is the project region that was over-written.
