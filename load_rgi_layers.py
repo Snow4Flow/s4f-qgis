@@ -2,12 +2,14 @@
 Add layers.
 """
 # pylint: disable=import-outside-toplevel
+import csv
 import os
 from pathlib import Path
 
 from qgis.core import (
     QgsBilinearRasterResampler,
     QgsColorRampShader,
+    QgsCoordinateReferenceSystem,
     QgsGradientColorRamp,
     QgsGradientStop,
     QgsHillshadeRenderer,
@@ -31,6 +33,37 @@ bucket = "pism-cloud-data"
 prefix = "s4f/planning"
 project = QgsProject.instance()
 root = project.layerTreeRoot()
+
+# Per-region settings. Project filename suffix (`-AK`, `-CA`, `-SV`)
+# selects which entry to use; see `_detect_region()`.
+REGIONS = {
+    "AK": {"crs": "EPSG:3338",   "csv": "S4F_target_AK_RGI_id.csv"},
+    "CA": {"crs": "ESRI:102001", "csv": "S4F_target_CA_RGI_id.csv"},
+    "SV": {"crs": "ESRI:102013", "csv": "S4F_target_SV_RGI_id.csv"},
+}
+
+
+def _detect_region():
+    """Return the region code (AK/CA/SV) from the QGIS project filename.
+
+    Expected naming: `modeling-planning-{REGION}.qgz`. Falls back to AK
+    with a printed warning so opening any other project doesn't blow up.
+    """
+    stem = Path(QgsProject.instance().fileName()).stem
+    suffix = stem.rsplit("-", 1)[-1].upper()
+    if suffix in REGIONS:
+        return suffix
+    print(f"load_rgi_layers: could not infer region from project name "
+          f"'{stem}'; defaulting to AK")
+    return "AK"
+
+
+def _load_rgi_ids(region):
+    """Read the single-column rgi_id CSV for this region."""
+    path = Path(__file__).parent / REGIONS[region]["csv"]
+    with open(path, newline="") as f:
+        return [row["rgi_id"] for row in csv.DictReader(f)]
+
 
 def _get_ramp(name: str, fallback: str = "Spectral"):
     """Return a color ramp by name from the default style, or a fallback if missing."""
@@ -99,6 +132,13 @@ def _apply_bilinear(layer):
 
 def add_layers():
 
+    region = _detect_region()
+    rgi_ids = _load_rgi_ids(region)
+    project.setCrs(QgsCoordinateReferenceSystem(REGIONS[region]["crs"]))
+    print(f"load_rgi_layers: region={region}, "
+          f"crs={REGIONS[region]['crs']}, "
+          f"{len(rgi_ids)} glaciers")
+
     # Custom DEM color map for the bed layer (built fresh per layer below).
     dem_colormap_path = Path(__file__).parent / "colormap_dem.txt"
     dem_stops, dem_interp = _load_qgis_colormap(dem_colormap_path)
@@ -106,56 +146,12 @@ def add_layers():
     thickness_colormap_path = Path(__file__).parent / "colormap_thickness.txt"
     thickness_stops, thickness_interp = _load_qgis_colormap(thickness_colormap_path)
     
-    rgi_ids = [
-        # "RGI2000-v7.0-C-07-00364",
-        # "RGI2000-v7.0-C-07-00387",
-        # "RGI2000-v7.0-C-07-00405",
-        # "RGI2000-v7.0-C-07-00410",
-        # "RGI2000-v7.0-C-07-00774",
-        # "RGI2000-v7.0-C-07-00842",
-        # "RGI2000-v7.0-C-07-00848",
-        # "RGI2000-v7.0-C-03-00028",
-        # "RGI2000-v7.0-C-03-00146",
-        # "RGI2000-v7.0-C-03-00228",
-        # "RGI2000-v7.0-C-03-00608",
-        # "RGI2000-v7.0-C-03-00647",
-        # "RGI2000-v7.0-C-03-00858",
-        # "RGI2000-v7.0-C-03-01019",
-        # "RGI2000-v7.0-C-03-01069",
-        # "RGI2000-v7.0-C-03-01107",
-        # "RGI2000-v7.0-C-03-01124",
-        # "RGI2000-v7.0-C-03-01153",
-        # "RGI2000-v7.0-C-03-01180",
-        # "RGI2000-v7.0-C-03-01236",
-        # "RGI2000-v7.0-C-03-01263",
-        # "RGI2000-v7.0-C-03-01936",
-        # "RGI2000-v7.0-C-03-02231",
-        # "RGI2000-v7.0-C-03-02314",
-        # "RGI2000-v7.0-C-03-02361",
-        # "RGI2000-v7.0-C-03-02392",
-        # "RGI2000-v7.0-C-03-02395",
-        "RGI2000-v7.0-C-01-01407",
-        "RGI2000-v7.0-C-01-03383",
-        "RGI2000-v7.0-C-01-04374",
-        "RGI2000-v7.0-C-01-05334",
-        "RGI2000-v7.0-C-01-05881",
-        "RGI2000-v7.0-C-01-06260",
-        "RGI2000-v7.0-C-01-07967",
-        "RGI2000-v7.0-C-01-08012",
-        "RGI2000-v7.0-C-01-08153",
-        "RGI2000-v7.0-C-01-08314",
-        "RGI2000-v7.0-C-01-08321",
-        "RGI2000-v7.0-C-01-08332",
-        "RGI2000-v7.0-C-01-09429",
-        "RGI2000-v7.0-C-01-11818",
-        "RGI2000-v7.0-C-01-12784",
-        "RGI2000-v7.0-C-01-14209",
-        "RGI2000-v7.0-C-01-14612",
-    ]
-
     top_group = root.findGroup("Glaciers") or root.addGroup("Glaciers")
     for i, rgi_id in enumerate(rgi_ids):
-        group = top_group.findGroup(rgi_id) or top_group.addGroup(rgi_id)
+        region_str = rgi_id.split("-")[3]
+        region = f"RGI {region_str}"
+        rgi_group = top_group.findGroup(region) or top_group.addGroup(region)
+        group = rgi_group.findGroup(rgi_id) or rgi_group.addGroup(rgi_id)
 
         v = "thickness"
 

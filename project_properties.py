@@ -24,7 +24,9 @@ def _remove_rgi_action():
             iface.removeToolBarIcon(action)
             action.deleteLater()
 
-def openProject():
+def install_toolbar_button():
+    """Install the 'Load RGI layers' toolbar button. Called from the QGIS
+    project macro's `openProject()`."""
 
     def _run():
         try:
@@ -42,7 +44,7 @@ def openProject():
     _remove_rgi_action()
 
     action = QAction(
-        QIcon(":/images/themes/default/mActionAddLayer.svg"),
+        QIcon(str(proj_dir / "images" / "S4F_logo_darkbg_notext.png")),
         "Load RGI layers",
         iface.mainWindow(),
     )
@@ -52,9 +54,7 @@ def openProject():
     action.triggered.connect(_run)
     iface.addToolBarIcon(action)
 
-def saveProject():
-    pass                                                  
-
-
-def closeProject():
+def uninstall_toolbar_button():
+    """Remove the toolbar button. Called from the QGIS project macro's
+    `closeProject()`."""
     _remove_rgi_action()
