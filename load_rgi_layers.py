@@ -49,11 +49,17 @@ REGIONS = {
 #   style:    "hillshade", or the colormap `.txt` to build a pseudocolor ramp from
 #   suffix:   appended to the layer name (to tell a hillshade apart from the ramp)
 #   mask_zero: treat 0 as NoData (thickness has 0 outside the ice)
+#   multiply: composite onto what is below instead of painting over it
+#
+# Each variable is a pair: an opaque color ramp with its hillshade multiplied
+# on top of it. The ice pair sits above the bed pair, which works because
+# thickness masks 0 to NoData and surface_clipped is clipped to the ice, so
+# both are transparent off-glacier and the shaded bed shows through.
 LAYERS = [
+    {"variable": "surface_clipped", "style": "hillshade", "suffix": "_hs", "multiply": True},
     {"variable": "thickness", "style": "colormap_thickness.txt", "mask_zero": True},
-    {"variable": "surface_clipped", "style": "hillshade", "suffix": "_hs"},
+    {"variable": "bed", "style": "hillshade", "suffix": "_hs", "multiply": True},
     {"variable": "bed", "style": "colormap_dem.txt"},
-    {"variable": "bed", "style": "hillshade", "suffix": "_hs"},
 ]
 
 
@@ -199,6 +205,8 @@ def add_layers():
             if spec["style"] not in colormaps:
                 colormaps[spec["style"]] = _load_qgis_colormap(path)
             layer.setRenderer(_pseudocolor_renderer(layer, *colormaps[spec["style"]]))
+
+        if spec.get("multiply"):
             layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
 
         if spec.get("mask_zero"):

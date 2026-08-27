@@ -28,10 +28,15 @@ where `...` is `https://pism-cloud-data.s3.us-west-2.amazonaws.com`.
 
 `load_rgi_layers.py` adds these rasters, top to bottom:
 
-  1. `<target>_thickness` — ice thickness, `colormap_thickness.txt`, 0 masked out
-  2. `<target>_surface_clipped_hs` — hillshaded ice surface
-  3. `<target>_bed` — bed topography, `colormap_dem.txt`
-  4. `<target>_bed_hs` — hillshaded bed topography
+  1. `<target>_surface_clipped_hs` — hillshaded ice surface, multiply
+  2. `<target>_thickness` — ice thickness, `colormap_thickness.txt`, 0 masked out
+  3. `<target>_bed_hs` — hillshaded bed topography, multiply
+  4. `<target>_bed` — bed topography, `colormap_dem.txt`
+
+Each variable is a pair: an opaque color ramp with its hillshade multiplied on top.
+The ice pair sits above the bed pair, which works because thickness masks 0 to NoData
+and `surface_clipped` is clipped to the ice, so both are transparent off-glacier and
+the shaded bed shows through.
 
 To add or drop a variable, edit the `LAYERS` list at the top of `load_rgi_layers.py`.
 Other variables in the same directory are `surface`, `ftt_mask`,
