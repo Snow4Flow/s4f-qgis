@@ -26,20 +26,21 @@ nothing needs to be downloaded and no AWS credentials are required. The layers u
 
 where `...` is `https://pism-cloud-data.s3.us-west-2.amazonaws.com`.
 
-`load_rgi_layers.py` adds these rasters, top to bottom:
+`load_rgi_layers.py` adds four groups under `<target>`, top to bottom:
 
-  1. `<target>_surface_clipped_hs` — hillshaded ice surface, multiply
-  2. `<target>_thickness` — ice thickness, `colormap_thickness.txt`, 0 masked out
-  3. `<target>_bed_hs` — hillshaded bed topography, multiply
-  4. `<target>_bed` — bed topography, `colormap_dem.txt`
+  | Group                                | Color ramp                                                   | Hillshade below it            |
+  | ------------------------------------ | ------------------------------------------------------------ | ----------------------------- |
+  | `dh 2000-2020 (Hugonnet)`            | `<target>_dh`, `colormap_dh.txt`                             | `<target>_surface_clipped_hs` |
+  | `Ice Thickness (Maffezzoli)`         | `<target>_thickness`, `colormap_thickness.txt`, 0 masked out | `<target>_surface_clipped_hs` |
+  | `Surface DEM (COP)`                  | `<target>_surface`, `colormap_dem.txt`                       | `<target>_surface_hs`         |
+  | `Subglacial Topography (Maffezzoli)` | `<target>_bed`, `colormap_dem.txt`                           | `<target>_bed_hs`             |
 
-Each variable is a pair: an opaque color ramp with its hillshade multiplied on top.
-The ice pair sits above the bed pair, which works because thickness masks 0 to NoData
-and `surface_clipped` is clipped to the ice, so both are transparent off-glacier and
-the shaded bed shows through.
+Each group is a self-contained pair: the color ramp is multiplied onto its own hillshade,
+so the shading shows through the colors. The groups stack with the derived quantities on
+top of the geometry they came from; uncheck one to reveal the one below it.
 
-To add or drop a variable, edit the `LAYERS` list at the top of `load_rgi_layers.py`.
-Other variables in the same directory are `surface`, `ftt_mask`,
+To add or drop a group or a layer, edit the `GROUPS` list at the top of
+`load_rgi_layers.py`. Other variables in the same directory are `ftt_mask`,
 `land_ice_area_fraction_retreat` and `tillwat`.
 
 ## Steps

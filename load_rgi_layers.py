@@ -44,22 +44,50 @@ REGIONS = {
     "SV": {"target": "S4F_target_07", "crs": "EPSG:3413"},  # NSIDC Sea Ice Polar Stereographic North
 }
 
-# Layers to add, in drawing order: the first entry ends up on top.
-#   variable: the `<target>_<variable>.tif` suffix on S3
-#   style:    "hillshade", or the colormap `.txt` to build a pseudocolor ramp from
-#   suffix:   appended to the layer name (to tell a hillshade apart from the ramp)
-#   mask_zero: treat 0 as NoData (thickness has 0 outside the ice)
-#   multiply: composite onto what is below instead of painting over it
+# Layer groups to add, in drawing order: the first entry ends up on top, both
+# for the groups and for the layers inside one.
+#   name:   the sub-group as it appears in the layer tree
+#   layers: what goes in it, each one
+#     variable:  the `<target>_<variable>.tif` suffix on S3
+#     style:     "hillshade", or the colormap `.txt` to build a pseudocolor ramp from
+#     suffix:    appended to the layer name (to tell a hillshade apart from the ramp)
+#     mask_zero: treat 0 as NoData (thickness has 0 outside the ice)
+#     multiply:  composite onto what is below instead of painting over it
 #
-# Each variable is a pair: an opaque color ramp with its hillshade multiplied
-# on top of it. The ice pair sits above the bed pair, which works because
-# thickness masks 0 to NoData and surface_clipped is clipped to the ice, so
-# both are transparent off-glacier and the shaded bed shows through.
-LAYERS = [
-    {"variable": "surface_clipped", "style": "hillshade", "suffix": "_hs", "multiply": True},
-    {"variable": "thickness", "style": "colormap_thickness.txt", "mask_zero": True},
-    {"variable": "bed", "style": "hillshade", "suffix": "_hs", "multiply": True},
-    {"variable": "bed", "style": "colormap_dem.txt"},
+# Each group is a pair: a color ramp multiplied onto its own hillshade, so the
+# shading shows through the colors and every group is self-contained. The
+# groups stack with the derived quantities on top of the geometry they came
+# from; uncheck one to reveal the one below.
+GROUPS = [
+    {
+        "name": "dh 2000-2020 (Hugonnet)",
+        "layers": [
+            {"variable": "dh", "style": "colormap_dh.txt", "multiply": True},
+            {"variable": "surface_clipped", "style": "hillshade", "suffix": "_hs"},
+        ],
+    },
+    {
+        "name": "Ice Thickness (Maffezzoli)",
+        "layers": [
+            {"variable": "thickness", "style": "colormap_thickness.txt",
+             "mask_zero": True, "multiply": True},
+            {"variable": "surface_clipped", "style": "hillshade", "suffix": "_hs"},
+        ],
+    },
+    {
+        "name": "Surface DEM (COP)",
+        "layers": [
+            {"variable": "surface", "style": "colormap_dem.txt", "multiply": True},
+            {"variable": "surface", "style": "hillshade", "suffix": "_hs"},
+        ],
+    },
+    {
+        "name": "Subglacial Topography (Maffezzoli)",
+        "layers": [
+            {"variable": "bed", "style": "colormap_dem.txt", "multiply": True},
+            {"variable": "bed", "style": "hillshade", "suffix": "_hs"},
+        ],
+    },
 ]
 
 
@@ -175,7 +203,7 @@ def _hillshade_renderer(layer):
 
 
 def add_layers():
-    """Add every layer in `LAYERS` for the project's region, if not already there."""
+    """Add every layer in `GROUPS` for the project's region, if not already there."""
     region = _detect_region()
     target = REGIONS[region]["target"]
     crs = REGIONS[region]["crs"]
@@ -183,41 +211,49 @@ def add_layers():
     print(f"load_rgi_layers: region={region}, target={target}, crs={crs}")
 
     colormaps = {}  # parsed once, reused across layers
-    group = root.findGroup(target) or root.addGroup(target)
+    target_group = root.findGroup(target) or root.addGroup(target)
 
-    for spec in LAYERS:
-        variable = spec["variable"]
-        name = f"{target}_{variable}"
-        layer_name = f"{name}{spec.get('suffix', '')}"
-        if any(child.name() == layer_name for child in group.findLayers()):
-            continue
+    for group_spec in GROUPS:
+        # Collapsed by default: four two-layer groups expanded is a wall of
+        # entries, and the group name already says what is in there.
+        group = target_group.findGroup(group_spec["name"])
+        if group is None:
+            group = target_group.addGroup(group_spec["name"])
+            group.setExpanded(False)
 
-        uri = f"/vsicurl/{BASE_URL}/{target}/input/{name}.tif"
-        layer = QgsRasterLayer(uri, layer_name)
-        if not layer.isValid():
-            print(f"FAIL: {uri}")
-            continue
+        for spec in group_spec["layers"]:
+            variable = spec["variable"]
+            name = f"{target}_{variable}"
+            layer_name = f"{name}{spec.get('suffix', '')}"
+            if any(child.name() == layer_name for child in group.findLayers()):
+                continue
 
-        if spec["style"] == "hillshade":
-            layer.setRenderer(_hillshade_renderer(layer))
-        else:
-            path = Path(__file__).parent / spec["style"]
-            if spec["style"] not in colormaps:
-                colormaps[spec["style"]] = _load_qgis_colormap(path)
-            layer.setRenderer(_pseudocolor_renderer(layer, *colormaps[spec["style"]]))
+            uri = f"/vsicurl/{BASE_URL}/{target}/input/{name}.tif"
+            layer = QgsRasterLayer(uri, layer_name)
+            if not layer.isValid():
+                print(f"FAIL: {uri}")
+                continue
 
-        if spec.get("multiply"):
-            layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
+            if spec["style"] == "hillshade":
+                layer.setRenderer(_hillshade_renderer(layer))
+            else:
+                path = Path(__file__).parent / spec["style"]
+                if spec["style"] not in colormaps:
+                    colormaps[spec["style"]] = _load_qgis_colormap(path)
+                layer.setRenderer(_pseudocolor_renderer(layer, *colormaps[spec["style"]]))
 
-        if spec.get("mask_zero"):
-            provider = layer.dataProvider()
-            provider.setUserNoDataValue(1, [QgsRasterRange(0, 0)])  # band 1, treat 0 as NoData
-            provider.setUseSourceNoDataValue(1, True)
+            if spec.get("multiply"):
+                layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
 
-        _apply_bilinear(layer)
-        layer.triggerRepaint()
-        project.addMapLayer(layer, addToLegend=False)
-        group.addLayer(layer)
+            if spec.get("mask_zero"):
+                provider = layer.dataProvider()
+                provider.setUserNoDataValue(1, [QgsRasterRange(0, 0)])  # band 1, treat 0 as NoData
+                provider.setUseSourceNoDataValue(1, True)
+
+            _apply_bilinear(layer)
+            layer.triggerRepaint()
+            project.addMapLayer(layer, addToLegend=False)
+            group.addLayer(layer)
 
 
 if __name__ == "__main__":
