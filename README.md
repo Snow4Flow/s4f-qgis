@@ -20,7 +20,7 @@ nothing needs to be downloaded and no AWS credentials are required. The layers u
 `AWS_NO_SIGN_REQUEST`) set in the environment before QGIS starts.
 
   - `.../s4f/planning/s4f_c.fgb` — RGI glacier complexes (all regions), loaded with the
-    project as *S4F RGI Glacier Complexes*.
+    project as *RGI Glacier Complexes*.
   - `.../s4f/planning/<target>/input/<target>_<variable>.tif` — one cloud-optimized
     GeoTIFF per variable covering the whole domain.
 
@@ -32,16 +32,28 @@ where `...` is `https://pism-cloud-data.s3.us-west-2.amazonaws.com`.
   | ------------------------------------ | ------------------------------------------------------------ | ----------------------------- |
   | `dh 2000-2020 (Hugonnet)`            | `<target>_dh`, `colormap_dh.txt`                             | `<target>_surface_clipped_hs` |
   | `Ice Thickness (Maffezzoli)`         | `<target>_thickness`, `colormap_thickness.txt`, 0 masked out | `<target>_surface_clipped_hs` |
-  | `Surface DEM (COP)`                  | `<target>_surface`, `colormap_dem.txt`                       | `<target>_surface_hs`         |
-  | `Subglacial Topography (Maffezzoli)` | `<target>_bed`, `colormap_dem.txt`                           | `<target>_bed_hs`             |
+  | `Surface DEM (COP)`                  | `<target>_surface`, `colormap_dem_topo.txt`                  | `<target>_surface_hs`         |
+  | `Subglacial Topography (Maffezzoli)` | `<target>_bed`, `colormap_dem_bath_topo.txt`                 | `<target>_bed_hs`             |
 
 Each group is a self-contained pair: the color ramp is multiplied onto its own hillshade,
 so the shading shows through the colors. The groups stack with the derived quantities on
 top of the geometry they came from; uncheck one to reveal the one below it.
 
+The two DEM ramps differ only at the bottom end: `colormap_dem_bath_topo.txt` starts at
+-2000 m so the bed's bathymetry gets its own blue, while `colormap_dem_topo.txt` starts at
+0 m, since the ice surface never goes below sea level.
+
 To add or drop a group or a layer, edit the `GROUPS` list at the top of
 `load_rgi_layers.py`. Other variables in the same directory are `ftt_mask`,
 `land_ice_area_fraction_retreat` and `tillwat`.
+
+## Print layouts
+
+`modeling-planning-AK.qgz` carries one print layout, **RGI C-01-03383**, framing that
+glacier complex with a legend for the USGS mean rates, `dh` and the surface DEM. Its
+legend is a customized one, so it refers to the raster layers by id; `load_rgi_layers.py`
+gives them stable ids and re-points the legend at them, which means the layout only fills
+in once you have clicked the Snow4Flow icon.
 
 ## Steps
 

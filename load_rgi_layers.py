@@ -17,6 +17,7 @@ from qgis.core import (
     QgsGradientColorRamp,
     QgsGradientStop,
     QgsHillshadeRenderer,
+    QgsLayoutItemLegend,
     QgsProject,
     QgsRasterLayer,
     QgsRasterRange,
@@ -77,14 +78,14 @@ GROUPS = [
     {
         "name": "Surface DEM (COP)",
         "layers": [
-            {"variable": "surface", "style": "colormap_dem.txt", "multiply": True},
+            {"variable": "surface", "style": "colormap_dem_topo.txt", "multiply": True},
             {"variable": "surface", "style": "hillshade", "suffix": "_hs"},
         ],
     },
     {
         "name": "Subglacial Topography (Maffezzoli)",
         "layers": [
-            {"variable": "bed", "style": "colormap_dem.txt", "multiply": True},
+            {"variable": "bed", "style": "colormap_dem_bath_topo.txt", "multiply": True},
             {"variable": "bed", "style": "hillshade", "suffix": "_hs"},
         ],
     },
@@ -107,7 +108,7 @@ def _detect_region():
 
 
 def _load_qgis_colormap(path):
-    """Parse a QGIS-exported color map ``.txt`` file (e.g. ``colormap_dem.txt``).
+    """Parse a QGIS-exported color map ``.txt`` file (e.g. ``colormap_dem_topo.txt``).
 
     The file format is::
 
@@ -140,6 +141,20 @@ def _load_qgis_colormap(path):
         label = parts[5] if len(parts) > 5 else str(value)
         stops.append((value, r, g, b, a, label))
     return stops, interp
+
+
+def _unique_id(base):
+    """Return a stable layer id derived from the layer name.
+
+    QGIS otherwise mints a random UUID per session, so anything that
+    references a layer by id -- the print layouts, most of all -- would break
+    the next time the layers are loaded. `surface_clipped_hs` appears in two
+    groups, hence the counter.
+    """
+    layer_id, n = base, 2
+    while project.mapLayer(layer_id) is not None:
+        layer_id, n = f"{base}_{n}", n + 1
+    return layer_id
 
 
 def _apply_bilinear(layer):
@@ -202,6 +217,21 @@ def _hillshade_renderer(layer):
     return renderer
 
 
+def _refresh_layout_legends():
+    """Point the saved print layouts' legends at the layers we just added.
+
+    A layout legend with a customized model (ours renames the groups, so it
+    has one) resolves its layer references when the project is read -- long
+    before these layers exist. Without this the legend comes up with empty
+    entries; the layer ids `_unique_id()` hands out are what it looks for.
+    """
+    for layout in project.layoutManager().layouts():
+        for item in layout.items():
+            if isinstance(item, QgsLayoutItemLegend):
+                item.model().rootGroup().resolveReferences(project)
+                item.updateLegend()
+
+
 def add_layers():
     """Add every layer in `GROUPS` for the project's region, if not already there."""
     region = _detect_region()
@@ -233,6 +263,7 @@ def add_layers():
             if not layer.isValid():
                 print(f"FAIL: {uri}")
                 continue
+            layer.setId(_unique_id(layer_name))
 
             if spec["style"] == "hillshade":
                 layer.setRenderer(_hillshade_renderer(layer))
@@ -254,6 +285,8 @@ def add_layers():
             layer.triggerRepaint()
             project.addMapLayer(layer, addToLegend=False)
             group.addLayer(layer)
+
+    _refresh_layout_legends()
 
 
 if __name__ == "__main__":
