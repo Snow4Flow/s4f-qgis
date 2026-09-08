@@ -8,6 +8,7 @@ domain and QGIS streams only the overview levels/tiles it needs.
 """
 # pylint: disable=import-outside-toplevel
 import os
+import re
 from pathlib import Path
 
 from qgis.core import (
@@ -50,8 +51,10 @@ REGIONS = {
 #   name:   the sub-group as it appears in the layer tree
 #   layers: what goes in it, each one
 #     variable:  the `<target>_<variable>.tif` suffix on S3
+#     label:     the name shown in the layer tree; the layer *id* stays
+#                `<target>_<variable><suffix>` so print layouts can find it
 #     style:     "hillshade", or the colormap `.txt` to build a pseudocolor ramp from
-#     suffix:    appended to the layer name (to tell a hillshade apart from the ramp)
+#     suffix:    appended to the layer id (to tell a hillshade apart from the ramp)
 #     mask_zero: treat 0 as NoData (thickness has 0 outside the ice)
 #     multiply:  composite onto what is below instead of painting over it
 #
@@ -59,34 +62,48 @@ REGIONS = {
 # shading shows through the colors and every group is self-contained. The
 # groups stack with the derived quantities on top of the geometry they came
 # from; uncheck one to reveal the one below.
+GLACIER_HILLSHADE = {"variable": "surface_clipped", "suffix": "_hs",
+                     "label": "Hillshade (glacier only)", "style": "hillshade"}
+
 GROUPS = [
+    {
+        "name": "ITS_LIVE",
+        "layers": [
+            {"variable": "its_live_v", "label": "v", "style": "colormap_speed.txt",
+             "multiply": True},
+            GLACIER_HILLSHADE,
+        ],
+    },
     {
         "name": "dh 2000-2020 (Hugonnet)",
         "layers": [
-            {"variable": "dh", "style": "colormap_dh.txt", "multiply": True},
-            {"variable": "surface_clipped", "style": "hillshade", "suffix": "_hs"},
+            {"variable": "dh", "label": "dh", "style": "colormap_dh.txt", "multiply": True},
+            GLACIER_HILLSHADE,
         ],
     },
     {
         "name": "Ice Thickness (Maffezzoli)",
         "layers": [
-            {"variable": "thickness", "style": "colormap_thickness.txt",
+            {"variable": "thickness", "label": "Thickness", "style": "colormap_thickness.txt",
              "mask_zero": True, "multiply": True},
-            {"variable": "surface_clipped", "style": "hillshade", "suffix": "_hs"},
+            GLACIER_HILLSHADE,
         ],
     },
     {
         "name": "Surface DEM (COP)",
         "layers": [
-            {"variable": "surface", "style": "colormap_dem_topo.txt", "multiply": True},
-            {"variable": "surface", "style": "hillshade", "suffix": "_hs"},
+            {"variable": "surface", "label": "Surface", "style": "colormap_dem_topo.txt",
+             "multiply": True},
+            {"variable": "surface", "suffix": "_hs", "label": "Hillshade", "style": "hillshade"},
         ],
     },
     {
         "name": "Subglacial Topography (Maffezzoli)",
         "layers": [
-            {"variable": "bed", "style": "colormap_dem_bath_topo.txt", "multiply": True},
-            {"variable": "bed", "style": "hillshade", "suffix": "_hs"},
+            {"variable": "bed", "label": "Bed", "style": "colormap_dem_bath_topo.txt",
+             "multiply": True},
+            {"variable": "bed", "suffix": "_hs", "label": "Hillshade (subglacial topography)",
+             "style": "hillshade"},
         ],
     },
 ]
@@ -144,17 +161,23 @@ def _load_qgis_colormap(path):
 
 
 def _unique_id(base):
-    """Return a stable layer id derived from the layer name.
+    """Return a stable layer id derived from `<target>_<variable><suffix>`.
 
     QGIS otherwise mints a random UUID per session, so anything that
     references a layer by id -- the print layouts, most of all -- would break
-    the next time the layers are loaded. `surface_clipped_hs` appears in two
-    groups, hence the counter.
+    the next time the layers are loaded. `surface_clipped_hs` appears in
+    several groups, hence the counter.
     """
     layer_id, n = base, 2
     while project.mapLayer(layer_id) is not None:
         layer_id, n = f"{base}_{n}", n + 1
     return layer_id
+
+
+def _group_has(group, base):
+    """True if `group` already holds a layer whose id came from `base`."""
+    pattern = re.compile(rf"^{re.escape(base)}(_\d+)?$")
+    return any(pattern.match(child.layerId()) for child in group.findLayers())
 
 
 def _apply_bilinear(layer):
@@ -254,16 +277,16 @@ def add_layers():
         for spec in group_spec["layers"]:
             variable = spec["variable"]
             name = f"{target}_{variable}"
-            layer_name = f"{name}{spec.get('suffix', '')}"
-            if any(child.name() == layer_name for child in group.findLayers()):
+            base_id = f"{name}{spec.get('suffix', '')}"
+            if _group_has(group, base_id):
                 continue
 
             uri = f"/vsicurl/{BASE_URL}/{target}/input/{name}.tif"
-            layer = QgsRasterLayer(uri, layer_name)
+            layer = QgsRasterLayer(uri, spec.get("label", base_id))
             if not layer.isValid():
                 print(f"FAIL: {uri}")
                 continue
-            layer.setId(_unique_id(layer_name))
+            layer.setId(_unique_id(base_id))
 
             if spec["style"] == "hillshade":
                 layer.setRenderer(_hillshade_renderer(layer))

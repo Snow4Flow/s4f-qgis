@@ -26,14 +26,18 @@ nothing needs to be downloaded and no AWS credentials are required. The layers u
 
 where `...` is `https://pism-cloud-data.s3.us-west-2.amazonaws.com`.
 
-`load_rgi_layers.py` adds four groups under `<target>`, top to bottom:
+`load_rgi_layers.py` adds five groups under `<target>`, top to bottom:
 
-  | Group                                | Color ramp                                                   | Hillshade below it            |
-  | ------------------------------------ | ------------------------------------------------------------ | ----------------------------- |
-  | `dh 2000-2020 (Hugonnet)`            | `<target>_dh`, `colormap_dh.txt`                             | `<target>_surface_clipped_hs` |
-  | `Ice Thickness (Maffezzoli)`         | `<target>_thickness`, `colormap_thickness.txt`, 0 masked out | `<target>_surface_clipped_hs` |
-  | `Surface DEM (COP)`                  | `<target>_surface`, `colormap_dem_topo.txt`                  | `<target>_surface_hs`         |
-  | `Subglacial Topography (Maffezzoli)` | `<target>_bed`, `colormap_dem_bath_topo.txt`                 | `<target>_bed_hs`             |
+  | Group                                | Color ramp                                                              | Hillshade below it                                          |
+  | ------------------------------------ | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
+  | `ITS_LIVE`                           | *v*: `<target>_its_live_v`, `colormap_speed.txt`                        | *Hillshade (glacier only)*: `<target>_surface_clipped_hs`   |
+  | `dh 2000-2020 (Hugonnet)`            | *dh*: `<target>_dh`, `colormap_dh.txt`                                  | *Hillshade (glacier only)*: `<target>_surface_clipped_hs`   |
+  | `Ice Thickness (Maffezzoli)`         | *Thickness*: `<target>_thickness`, `colormap_thickness.txt`, 0 masked out | *Hillshade (glacier only)*: `<target>_surface_clipped_hs` |
+  | `Surface DEM (COP)`                  | *Surface*: `<target>_surface`, `colormap_dem_topo.txt`                  | *Hillshade*: `<target>_surface_hs`                          |
+  | `Subglacial Topography (Maffezzoli)` | *Bed*: `<target>_bed`, `colormap_dem_bath_topo.txt`                     | *Hillshade (subglacial topography)*: `<target>_bed_hs`      |
+
+The italic names are what the layer tree shows; the `<target>_...` names are the layer
+ids (and the GeoTIFF basenames on S3), which stay fixed so print layouts can refer to them.
 
 Each group is a self-contained pair: the color ramp is multiplied onto its own hillshade,
 so the shading shows through the colors. The groups stack with the derived quantities on
@@ -42,6 +46,9 @@ top of the geometry they came from; uncheck one to reveal the one below it.
 The two DEM ramps differ only at the bottom end: `colormap_dem_bath_topo.txt` starts at
 -2000 m so the bed's bathymetry gets its own blue, while `colormap_dem_topo.txt` starts at
 0 m, since the ice surface never goes below sea level.
+
+`colormap_speed.txt` is the ITS_LIVE surface-speed ramp, 10 to 750 m/yr; speeds below 10
+get the lowest color rather than being masked.
 
 To add or drop a group or a layer, edit the `GROUPS` list at the top of
 `load_rgi_layers.py`. Other variables in the same directory are `ftt_mask`,
