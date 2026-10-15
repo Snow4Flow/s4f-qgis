@@ -62,6 +62,9 @@ REGIONS = {
 # shading shows through the colors and every group is self-contained. The
 # groups stack with the derived quantities on top of the geometry they came
 # from; uncheck one to reveal the one below.
+#
+# A group whose first layer is not on S3 for the region is dropped entirely:
+# a hillshade on its own would just be clutter.
 GLACIER_HILLSHADE = {"variable": "surface_clipped", "suffix": "_hs",
                      "label": "Hillshade (glacier only)", "style": "hillshade"}
 
@@ -79,6 +82,17 @@ GROUPS = [
         "layers": [
             {"variable": "dh", "label": "dh", "style": "colormap_dh.txt", "multiply": True},
             GLACIER_HILLSHADE,
+        ],
+    },
+    {
+        # CARRA2 is a regional reanalysis; the COG only exists where the
+        # domain is covered (Alaska so far). Elsewhere the group is skipped.
+        "name": "CARRA2 Snowfall 1990-2019",
+        "layers": [
+            {"variable": "carra2_snowfall_1990_2019", "label": "Snowfall",
+             "style": "colormap_snowfall.txt", "multiply": True},
+            {"variable": "surface", "suffix": "_hs_carra2", "label": "Hillshade",
+             "style": "hillshade"},
         ],
     },
     {
@@ -285,6 +299,11 @@ def add_layers():
             layer = QgsRasterLayer(uri, spec.get("label", base_id))
             if not layer.isValid():
                 print(f"FAIL: {uri}")
+                if not group.findLayers():
+                    print(f"load_rgi_layers: skipping group '{group_spec['name']}' "
+                          f"for {target}, no {name}.tif on S3")
+                    target_group.removeChildNode(group)
+                    break
                 continue
             layer.setId(_unique_id(base_id))
 
