@@ -60,6 +60,13 @@ To add or drop a group or a layer, edit the `GROUPS` list at the top of
 `load_rgi_layers.py`. Other variables in the same directory are `ftt_mask`,
 `land_ice_area_fraction_retreat` and `tillwat`.
 
+## Basemap
+
+Each project has *ESRI World Imagery* as an XYZ tile layer at the bottom of the layer tree,
+checked on open. It is served in web mercator and QGIS warps the tiles into the project CRS
+on the fly; at the latitudes of the three domains that looks fine. The loader puts the
+`<target>` group right above it.
+
 ## Map decorations
 
 All three projects carry a north arrow (upper right, follows true north for the polar

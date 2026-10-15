@@ -39,6 +39,10 @@ os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
 # bucket is public, so /vsicurl/ works for everyone with no setup at all.
 BASE_URL = "https://pism-cloud-data.s3.us-west-2.amazonaws.com/s4f/planning"
 
+# The projects carry an ESRI World Imagery XYZ layer under this id at the
+# bottom of the layer tree; the rasters go in right above it.
+BASEMAP_ID = "esri_world_imagery"
+
 project = QgsProject.instance()
 root = project.layerTreeRoot()
 
@@ -348,7 +352,13 @@ def add_layers(local_dir=None):
           f"source={local_dir or 'S3'}")
 
     colormaps = {}  # parsed once, reused across layers
-    target_group = root.findGroup(target) or root.addGroup(target)
+    target_group = root.findGroup(target)
+    if target_group is None:
+        # Above the basemap, which is the bottom of the tree in the projects;
+        # appending would hide every raster underneath the imagery.
+        basemap = root.findLayer(BASEMAP_ID)
+        index = root.children().index(basemap) if basemap else -1
+        target_group = root.insertGroup(index, target)
 
     for group_spec in GROUPS:
         # Collapsed by default: four two-layer groups expanded is a wall of
