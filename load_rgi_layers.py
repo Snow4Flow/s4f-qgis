@@ -5,6 +5,10 @@ Each region has one set of domain-wide cloud-optimized GeoTIFFs in the public
 ``pism-cloud-data`` bucket under ``s4f/planning/<target>/input/``, so there is
 nothing to loop over: one ``QgsRasterLayer`` per variable covers the whole
 domain and QGIS streams only the overview levels/tiles it needs.
+
+``add_layers()`` streams them from S3; ``add_layers(local_dir)`` reads the
+same files from a folder ``project_properties.py`` downloaded them to, and
+re-points layers that are already in the project instead of adding twice.
 """
 # pylint: disable=import-outside-toplevel
 import os
@@ -15,6 +19,7 @@ from qgis.core import (
     QgsBilinearRasterResampler,
     QgsColorRampShader,
     QgsCoordinateReferenceSystem,
+    QgsDataProvider,
     QgsGradientColorRamp,
     QgsGradientStop,
     QgsHillshadeRenderer,
@@ -138,6 +143,34 @@ def _detect_region():
     return "AK"
 
 
+def region_files(target):
+    """The GeoTIFF basenames `GROUPS` needs for `target`, in load order.
+
+    `surface_clipped` and `surface` are shared by several groups, so this is
+    shorter than the layer list. Each is `<target>_<variable>.tif` both on
+    S3 (under `<target>/input/`) and in a download folder.
+    """
+    names = []
+    for group_spec in GROUPS:
+        for spec in group_spec["layers"]:
+            name = f"{target}_{spec['variable']}.tif"
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def remote_url(target, filename):
+    """Plain HTTPS URL of one of the region's GeoTIFFs."""
+    return f"{BASE_URL}/{target}/input/{filename}"
+
+
+def _uri(target, filename, local_dir):
+    """GDAL source for a GeoTIFF: a local path, or /vsicurl/ over S3."""
+    if local_dir:
+        return str(Path(local_dir) / filename)
+    return f"/vsicurl/{remote_url(target, filename)}"
+
+
 def _load_qgis_colormap(path):
     """Parse a QGIS-exported color map ``.txt`` file (e.g. ``colormap_dem_topo.txt``).
 
@@ -188,10 +221,13 @@ def _unique_id(base):
     return layer_id
 
 
-def _group_has(group, base):
-    """True if `group` already holds a layer whose id came from `base`."""
+def _group_layer(group, base):
+    """The layer in `group` whose id came from `base`, or None."""
     pattern = re.compile(rf"^{re.escape(base)}(_\d+)?$")
-    return any(pattern.match(child.layerId()) for child in group.findLayers())
+    for child in group.findLayers():
+        if pattern.match(child.layerId()):
+            return child.layer()
+    return None
 
 
 def _apply_bilinear(layer):
@@ -269,13 +305,47 @@ def _refresh_layout_legends():
                 item.updateLegend()
 
 
-def add_layers():
-    """Add every layer in `GROUPS` for the project's region, if not already there."""
+def _style_layer(layer, spec, colormaps):
+    """Apply the renderer, blend mode, NoData and resampling `spec` asks for.
+
+    Everything here is derived from `spec`, so it can be re-applied after
+    the layer's data source changes (which recreates the data provider and
+    with it the NoData and resampling settings).
+    """
+    if spec["style"] == "hillshade":
+        layer.setRenderer(_hillshade_renderer(layer))
+    else:
+        path = Path(__file__).parent / spec["style"]
+        if spec["style"] not in colormaps:
+            colormaps[spec["style"]] = _load_qgis_colormap(path)
+        layer.setRenderer(_pseudocolor_renderer(layer, *colormaps[spec["style"]]))
+
+    if spec.get("multiply"):
+        layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
+
+    if spec.get("mask_zero"):
+        provider = layer.dataProvider()
+        provider.setUserNoDataValue(1, [QgsRasterRange(0, 0)])  # band 1, treat 0 as NoData
+        provider.setUseSourceNoDataValue(1, True)
+
+    _apply_bilinear(layer)
+    layer.triggerRepaint()
+
+
+def add_layers(local_dir=None):
+    """Add every layer in `GROUPS` for the project's region.
+
+    With `local_dir`, the GeoTIFFs are read from that folder instead of S3.
+    A layer that is already in the project is kept -- re-pointed at the new
+    source if that differs, so switching between S3 and a download, or to a
+    fresh download, never duplicates anything.
+    """
     region = _detect_region()
     target = REGIONS[region]["target"]
     crs = REGIONS[region]["crs"]
     project.setCrs(QgsCoordinateReferenceSystem(crs))
-    print(f"load_rgi_layers: region={region}, target={target}, crs={crs}")
+    print(f"load_rgi_layers: region={region}, target={target}, crs={crs}, "
+          f"source={local_dir or 'S3'}")
 
     colormaps = {}  # parsed once, reused across layers
     target_group = root.findGroup(target) or root.addGroup(target)
@@ -290,41 +360,34 @@ def add_layers():
 
         for spec in group_spec["layers"]:
             variable = spec["variable"]
-            name = f"{target}_{variable}"
-            base_id = f"{name}{spec.get('suffix', '')}"
-            if _group_has(group, base_id):
+            filename = f"{target}_{variable}.tif"
+            base_id = f"{target}_{variable}{spec.get('suffix', '')}"
+            uri = _uri(target, filename, local_dir)
+
+            layer = _group_layer(group, base_id)
+            if layer is not None:
+                if layer.source() != uri:
+                    # Same layer, new source: the provider is rebuilt, so
+                    # the style (NoData, resampling) has to be re-applied.
+                    layer.setDataSource(uri, layer.name(), "gdal",
+                                        QgsDataProvider.ProviderOptions())
+                    if layer.isValid():
+                        _style_layer(layer, spec, colormaps)
+                    else:
+                        print(f"FAIL: {uri}")
                 continue
 
-            uri = f"/vsicurl/{BASE_URL}/{target}/input/{name}.tif"
             layer = QgsRasterLayer(uri, spec.get("label", base_id))
             if not layer.isValid():
                 print(f"FAIL: {uri}")
                 if not group.findLayers():
                     print(f"load_rgi_layers: skipping group '{group_spec['name']}' "
-                          f"for {target}, no {name}.tif on S3")
+                          f"for {target}, no {filename}")
                     target_group.removeChildNode(group)
                     break
                 continue
             layer.setId(_unique_id(base_id))
-
-            if spec["style"] == "hillshade":
-                layer.setRenderer(_hillshade_renderer(layer))
-            else:
-                path = Path(__file__).parent / spec["style"]
-                if spec["style"] not in colormaps:
-                    colormaps[spec["style"]] = _load_qgis_colormap(path)
-                layer.setRenderer(_pseudocolor_renderer(layer, *colormaps[spec["style"]]))
-
-            if spec.get("multiply"):
-                layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
-
-            if spec.get("mask_zero"):
-                provider = layer.dataProvider()
-                provider.setUserNoDataValue(1, [QgsRasterRange(0, 0)])  # band 1, treat 0 as NoData
-                provider.setUseSourceNoDataValue(1, True)
-
-            _apply_bilinear(layer)
-            layer.triggerRepaint()
+            _style_layer(layer, spec, colormaps)
             project.addMapLayer(layer, addToLegend=False)
             group.addLayer(layer)
 

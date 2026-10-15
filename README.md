@@ -71,11 +71,32 @@ in once you have clicked the Snow4Flow icon.
 ## Steps
 
 To reduce the initial load time of the project, the raster layers are not automatically added
-to the project. To load them, click on the Snow4Flow icon (the location on your toolbar may
-vary). Depending on the network connection, it may take a moment to open the layers from AWS
-West-2 (cloud optimized geotiffs); QGIS then streams only the overview levels it needs.
+to the project. The Snow4Flow icon (the location on your toolbar may vary) opens a dialog with
+two choices:
+
+  - **Load from S3** streams the cloud-optimized GeoTIFFs from AWS us-west-2. Depending on
+    the network connection it may take a moment to open the layers; QGIS then streams only
+    the overview levels it needs.
+  - **Download from S3…** asks for a folder, downloads the region's GeoTIFFs into it (a
+    progress bar appears in the message bar, and the download can be cancelled) and then
+    loads the layers from there. The sizes are roughly 4 GB for Alaska, 0.7 GB for Arctic
+    Canada and 0.3 GB for Svalbard. The folder is remembered for next time.
+
+A download keeps a small `s4f_manifest.json` next to the files with what S3 reported for
+each of them (size, ETag, Last-Modified). Choosing *Download from S3…* again only fetches
+files that changed on S3 since, or that are missing locally, so it doubles as "load the
+local copy". Tick *Re-download everything* to fetch all of them regardless. Files are
+written as `.part` and renamed once complete, so an interrupted download never leaves a
+truncated GeoTIFF behind under its final name.
+
+Layers that are already in the project are not added twice: switching between S3 and a
+download, or to a fresh download, just re-points them at the new source and keeps their
+styling and the print layout intact.
+
+The RGI glacier complexes and the USGS benchmark layers are still read from S3 by the
+projects themselves; the download covers the rasters only.
 
   1. Load a project.
-  2. Click on the Snow4Flow icon (the location on your toolbar may vary).
+  2. Click on the Snow4Flow icon and pick *Load from S3* or *Download from S3…*.
   3. Save your project under a different name to avoid over-writing the version-controlled project. Unless it is your intend to make changes.
   4. If you accidentally save the version-controlled project, do `git checkout --  modeling-planning-region.qgz` where `region` is the project region that was over-written.
