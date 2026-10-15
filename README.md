@@ -60,6 +60,13 @@ To add or drop a group or a layer, edit the `GROUPS` list at the top of
 `load_rgi_layers.py`. Other variables in the same directory are `ftt_mask`,
 `land_ice_area_fraction_retreat` and `tillwat`.
 
+## Map decorations
+
+All three projects carry a north arrow (upper right, follows true north for the polar
+stereographic project CRS as you pan) and a scale bar (lower left, snapped to round numbers)
+as canvas decorations. Adjust them under *View ▸ Decorations*; they are saved with the
+project.
+
 ## Print layouts
 
 `modeling-planning-AK.qgz` carries one print layout, **RGI C-01-03383**, framing that
