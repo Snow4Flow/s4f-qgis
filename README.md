@@ -26,13 +26,14 @@ nothing needs to be downloaded and no AWS credentials are required. The layers u
 
 where `...` is `https://pism-cloud-data.s3.us-west-2.amazonaws.com`.
 
-`load_rgi_layers.py` adds up to six groups under `<target>`, top to bottom:
+`load_rgi_layers.py` adds up to seven groups under `<target>`, top to bottom:
 
   | Group                                | Color ramp                                                              | Hillshade below it                                          |
   | ------------------------------------ | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
   | `ITS_LIVE`                           | *v*: `<target>_its_live_v`, `colormap_speed.txt`                        | *Hillshade (glacier only)*: `<target>_surface_clipped_hs`   |
   | `dh 2000-2020 (Hugonnet)`            | *dh*: `<target>_dh`, `colormap_dh.txt`                                  | *Hillshade (glacier only)*: `<target>_surface_clipped_hs`   |
   | `CARRA2 Snowfall 1990-2019`          | *Snowfall*: `<target>_carra2_snowfall_1990_2019`, `colormap_snowfall.txt` | *Hillshade*: `<target>_surface_hs_carra2`                 |
+  | `CARRA2 Total Precipitation 1990-2019` | *Precipitation*: `<target>_carra2_precipitation_1990_2019`, `colormap_snowfall.txt` | *Hillshade*: `<target>_surface_hs_carra2p`      |
   | `Ice Thickness (Maffezzoli)`         | *Thickness*: `<target>_thickness`, `colormap_thickness.txt`, 0 masked out | *Hillshade (glacier only)*: `<target>_surface_clipped_hs` |
   | `Surface DEM (COP)`                  | *Surface*: `<target>_surface`, `colormap_dem_topo.txt`                  | *Hillshade*: `<target>_surface_hs`                          |
   | `Subglacial Topography (Maffezzoli)` | *Bed*: `<target>_bed`, `colormap_dem_bath_topo.txt`                     | *Hillshade (subglacial topography)*: `<target>_bed_hs`      |
@@ -50,7 +51,7 @@ The two DEM ramps differ only at the bottom end: `colormap_dem_bath_topo.txt` st
 
 `colormap_speed.txt` is the ITS_LIVE surface-speed ramp, 10 to 750 m/yr; speeds below 10
 get the lowest color rather than being masked. `colormap_snowfall.txt` is the CARRA2 ramp,
-0 to 10.
+0 to 10, shared by snowfall and total precipitation so the two can be compared directly.
 
 A group is only added where its color-ramp GeoTIFF exists on S3; the script says so in
 the Python console when it skips one. `CARRA2 Snowfall 1990-2019` is the only group that

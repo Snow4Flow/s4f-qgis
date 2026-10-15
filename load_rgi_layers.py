@@ -105,6 +105,15 @@ GROUPS = [
         ],
     },
     {
+        "name": "CARRA2 Total Precipitation 1990-2019",
+        "layers": [
+            {"variable": "carra2_precipitation_1990_2019", "label": "Precipitation",
+             "style": "colormap_snowfall.txt", "multiply": True},
+            {"variable": "surface", "suffix": "_hs_carra2p", "label": "Hillshade",
+             "style": "hillshade"},
+        ],
+    },
+    {
         "name": "Ice Thickness (Maffezzoli)",
         "layers": [
             {"variable": "thickness", "label": "Thickness", "style": "colormap_thickness.txt",
