@@ -87,7 +87,7 @@ in once you have clicked the Snow4Flow icon.
 
 To reduce the initial load time of the project, the raster layers are not automatically added
 to the project. The Snow4Flow icon (the location on your toolbar may vary) opens a dialog with
-two choices:
+three choices:
 
   - **Load from S3** streams the cloud-optimized GeoTIFFs from AWS us-west-2. Depending on
     the network connection it may take a moment to open the layers; QGIS then streams only
@@ -96,11 +96,15 @@ two choices:
     progress bar appears in the message bar, and the download can be cancelled) and then
     loads the layers from there. The sizes are roughly 4 GB for Alaska, 0.7 GB for Arctic
     Canada and 0.3 GB for Svalbard. The folder is remembered for next time.
+  - **Load from local…** asks for a folder you downloaded the data to earlier and loads the
+    layers from there, without touching the network. Files that are not in the folder are
+    reported and their groups skipped.
 
 A download keeps a small `s4f_manifest.json` next to the files with what S3 reported for
 each of them (size, ETag, Last-Modified). Choosing *Download from S3…* again only fetches
 files that changed on S3 since, or that are missing locally, so it doubles as "load the
-local copy". Tick *Re-download everything* to fetch all of them regardless. Files are
+local copy" with a freshness check, while *Load from local…* skips the check. Tick
+*Re-download everything* to fetch all of them regardless. Files are
 written as `.part` and renamed once complete, so an interrupted download never leaves a
 truncated GeoTIFF behind under its final name.
 
@@ -112,6 +116,7 @@ The RGI glacier complexes and the USGS benchmark layers are still read from S3 b
 projects themselves; the download covers the rasters only.
 
   1. Load a project.
-  2. Click on the Snow4Flow icon and pick *Load from S3* or *Download from S3…*.
+  2. Click on the Snow4Flow icon and pick *Load from S3*, *Download from S3…* or
+     *Load from local…*.
   3. Save your project under a different name to avoid over-writing the version-controlled project. Unless it is your intend to make changes.
   4. If you accidentally save the version-controlled project, do `git checkout --  modeling-planning-region.qgz` where `region` is the project region that was over-written.

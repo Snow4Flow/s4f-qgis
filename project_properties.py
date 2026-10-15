@@ -2,11 +2,13 @@
 Project macros: the Snow4Flow toolbar button and what it does.
 
 Loaded by the `openProject()` macro of each `modeling-planning-*.qgz`. The
-button opens a small dialog with two choices:
+button opens a small dialog with three choices:
 
   - Load from S3        stream the region's GeoTIFFs over /vsicurl/
   - Download from S3... pick a folder, fetch the GeoTIFFs into it, then load
                         them from there
+  - Load from local...  pick a folder with an earlier download and load the
+                        GeoTIFFs from there, no network involved
 
 A download keeps a manifest (`s4f_manifest.json`) of what S3 reported for
 each file, so the next download only fetches what changed on S3 or is
@@ -106,6 +108,14 @@ def remote_info(url):
         "etag": headers.get("ETag", ""),
         "last_modified": headers.get("Last-Modified", ""),
     }
+
+
+def local_status(mod, target, folder):
+    """Split the region's files into those present in `folder` and the rest."""
+    present, missing = [], []
+    for filename in mod.region_files(target):
+        (present if (Path(folder) / filename).is_file() else missing).append(filename)
+    return present, missing
 
 
 def plan_download(mod, target, folder, force=False):
@@ -210,7 +220,7 @@ class DownloadTask(QgsTask):
 class S4FDialog(QDialog):
     """Load from S3, or download to a folder first."""
 
-    LOAD, DOWNLOAD = 1, 2
+    LOAD, DOWNLOAD, LOCAL = 1, 2, 3
 
     def __init__(self, region, target, parent=None):
         super().__init__(parent)
@@ -218,24 +228,27 @@ class S4FDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
             f"<b>{REGION_NAMES.get(region, region)}</b> &nbsp; ({target})<br>"
-            "Stream the planning rasters from S3, or download them first<br>"
-            "and load the local copy."))
+            "Stream the planning rasters from S3, download them first,<br>"
+            "or load a folder you downloaded them to earlier."))
         self.force = QCheckBox("Re-download everything, even files that are up to date")
         layout.addWidget(self.force)
 
         buttons = QHBoxLayout()
         load = QPushButton("Load from S3")
         download = QPushButton("Download from S3…")
+        local = QPushButton("Load from local…")
         cancel = QPushButton("Cancel")
         load.setDefault(True)
-        for b in (load, download, cancel):
+        for b in (load, download, local, cancel):
             buttons.addWidget(b)
         layout.addLayout(buttons)
 
         load.clicked.connect(lambda: self.done(self.LOAD))
         download.clicked.connect(lambda: self.done(self.DOWNLOAD))
+        local.clicked.connect(lambda: self.done(self.LOCAL))
         cancel.clicked.connect(self.reject)
-        self.force.toggled.connect(lambda on: load.setEnabled(not on))
+        # the checkbox only means something for a download
+        self.force.toggled.connect(lambda on: (load.setEnabled(not on), local.setEnabled(not on)))
 
 
 def _report(kind, text):
@@ -248,17 +261,43 @@ def _load(mod, local_dir=None):
     _report("pushSuccess", f"Layers loaded {where}")
 
 
+def _pick_folder(title):
+    """Native folder picker, starting at (and remembering) the last folder used."""
+    settings = QgsSettings()
+    folder = QFileDialog.getExistingDirectory(
+        iface.mainWindow(), title,
+        settings.value(SETTINGS_KEY, str(Path.home())),
+        QFileDialog.Option.ShowDirsOnly)
+    if folder:
+        settings.setValue(SETTINGS_KEY, folder)
+    return folder
+
+
+def _load_local(mod, target):
+    """Folder picker -> load whatever of the region's files is in there."""
+    folder = _pick_folder("Choose the folder with the downloaded Snow4Flow data")
+    if not folder:
+        return
+    present, missing = local_status(mod, target, folder)
+    if not present:
+        QMessageBox.warning(
+            iface.mainWindow(), "Snow4Flow",
+            f"No {target} GeoTIFFs in<br><tt>{folder}</tt>.<br>"
+            "Use <i>Download from S3…</i> to fetch them first.")
+        return
+    _load(mod, folder)
+    if missing:
+        _report("pushWarning",
+                f"{len(missing)} of {len(present) + len(missing)} files not in {folder}, "
+                f"their groups were skipped: {', '.join(missing)}")
+
+
 def _download(mod, target, force):
     """Folder picker -> plan -> confirm -> background download -> load."""
     global _task  # pylint: disable=global-statement
-    settings = QgsSettings()
-    folder = QFileDialog.getExistingDirectory(
-        iface.mainWindow(), "Choose a folder for the Snow4Flow data",
-        settings.value(SETTINGS_KEY, str(Path.home())),
-        QFileDialog.Option.ShowDirsOnly)
+    folder = _pick_folder("Choose a folder for the Snow4Flow data")
     if not folder:
         return
-    settings.setValue(SETTINGS_KEY, folder)
 
     QgsApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
     try:
@@ -319,6 +358,8 @@ def _run():
             _load(mod)
         elif choice == S4FDialog.DOWNLOAD:
             _download(mod, target, dialog.force.isChecked())
+        elif choice == S4FDialog.LOCAL:
+            _load_local(mod, target)
     except Exception as exc:  # pylint: disable=broad-except
         _report("pushCritical", f"{type(exc).__name__}: {exc}")
         print(traceback.format_exc())
@@ -342,7 +383,8 @@ def install_toolbar_button():
         iface.mainWindow(),
     )
     action.setObjectName("rgi_load_action")  # stable id for cleanup
-    action.setToolTip("Load the Snow4Flow planning rasters from S3, or download them first")
+    action.setToolTip("Load the Snow4Flow planning rasters from S3, from a download, "
+                      "or download them first")
     action.triggered.connect(_run)
     iface.addToolBarIcon(action)
 
