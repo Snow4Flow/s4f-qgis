@@ -57,8 +57,10 @@ REGIONS = {
 
 # Layer groups to add, in drawing order: the first entry ends up on top, both
 # for the groups and for the layers inside one.
-#   name:   the sub-group as it appears in the layer tree
-#   layers: what goes in it, each one
+#   name:    the sub-group as it appears in the layer tree
+#   visible: whether the group starts checked (default True); the layers in
+#            it are always checked, so ticking the group is all it takes
+#   layers:  what goes in it, each one
 #     variable:  the `<target>_<variable>.tif` suffix on S3
 #     label:     the name shown in the layer tree; the layer *id* stays
 #                `<target>_<variable><suffix>` so print layouts can find it
@@ -88,6 +90,7 @@ GROUPS = [
     },
     {
         "name": "dh 2000-2020 (Hugonnet)",
+        "visible": False,
         "layers": [
             {"variable": "dh", "label": "dh", "style": "colormap_dh.txt", "multiply": True},
             GLACIER_HILLSHADE,
@@ -97,6 +100,7 @@ GROUPS = [
         # CARRA2 is a regional reanalysis; the COG only exists where the
         # domain is covered (Alaska so far). Elsewhere the group is skipped.
         "name": "CARRA2 Snowfall 1990-2019",
+        "visible": False,
         "layers": [
             {"variable": "carra2_snowfall_1990_2019", "label": "Snowfall",
              "style": "colormap_snowfall.txt", "multiply": True},
@@ -106,6 +110,7 @@ GROUPS = [
     },
     {
         "name": "CARRA2 Total Precipitation 1990-2019",
+        "visible": False,
         "layers": [
             {"variable": "carra2_precipitation_1990_2019", "label": "Precipitation",
              "style": "colormap_snowfall.txt", "multiply": True},
@@ -115,6 +120,7 @@ GROUPS = [
     },
     {
         "name": "Ice Thickness (Maffezzoli)",
+        "visible": False,
         "layers": [
             {"variable": "thickness", "label": "Thickness", "style": "colormap_thickness.txt",
              "mask_zero": True, "multiply": True},
@@ -376,6 +382,7 @@ def add_layers(local_dir=None):
         if group is None:
             group = target_group.addGroup(group_spec["name"])
             group.setExpanded(False)
+            group.setItemVisibilityChecked(group_spec.get("visible", True))
 
         for spec in group_spec["layers"]:
             variable = spec["variable"]

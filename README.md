@@ -40,6 +40,9 @@ where `...` is `https://pism-cloud-data.s3.us-west-2.amazonaws.com`.
 
 The italic names are what the layer tree shows; the `<target>_...` names are the layer
 ids (and the GeoTIFF basenames on S3), which stay fixed so print layouts can refer to them.
+Only `ITS_LIVE`, `Surface DEM (COP)` and `Subglacial Topography (Maffezzoli)` start
+checked; the others are there but hidden until you tick them, which keeps the first view
+uncluttered (`visible` in `GROUPS`).
 
 Each group is a self-contained pair: the color ramp is multiplied onto its own hillshade,
 so the shading shows through the colors. The groups stack with the derived quantities on
