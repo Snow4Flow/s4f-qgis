@@ -1,46 +1,150 @@
 """
-Add layers.
+Add the Snow4Flow planning layers for a region to the current QGIS project.
+
+Each region has one set of domain-wide cloud-optimized GeoTIFFs in the public
+``pism-cloud-data`` bucket under ``s4f/planning/<target>/input/``, so there is
+nothing to loop over: one ``QgsRasterLayer`` per variable covers the whole
+domain and QGIS streams only the overview levels/tiles it needs.
+
+``add_layers()`` streams them from S3; ``add_layers(local_dir)`` reads the
+same files from a folder ``project_properties.py`` downloaded them to, and
+re-points layers that are already in the project instead of adding twice.
 """
 # pylint: disable=import-outside-toplevel
-import csv
 import os
+import re
 from pathlib import Path
 
 from qgis.core import (
     QgsBilinearRasterResampler,
     QgsColorRampShader,
     QgsCoordinateReferenceSystem,
+    QgsDataProvider,
     QgsGradientColorRamp,
     QgsGradientStop,
     QgsHillshadeRenderer,
+    QgsLayoutItemLegend,
     QgsProject,
     QgsRasterLayer,
     QgsRasterRange,
     QgsRasterShader,
     QgsSingleBandPseudoColorRenderer,
-    QgsStyle,
 )
 from qgis.PyQt.QtGui import QColor, QPainter
-from qgis.PyQt.QtWidgets import QApplication
 
-# For a public bucket; for a private bucket, configure AWS creds instead.
-os.environ.setdefault("AWS_NO_SIGN_REQUEST", "YES")
-os.environ.setdefault("AWS_REGION", "us-west-2")  # pism-cloud-data lives here
 os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
 
-variables = [ "surface_clipped", "thickness", "bed"]
-bucket = "pism-cloud-data"
-prefix = "s4f/planning"
+# Read over plain HTTPS rather than /vsis3/, which would need AWS credentials
+# (or AWS_NO_SIGN_REQUEST) in the environment before QGIS even starts. The
+# bucket is public, so /vsicurl/ works for everyone with no setup at all.
+BASE_URL = "https://pism-cloud-data.s3.us-west-2.amazonaws.com/s4f/planning"
+
+# The projects carry an ESRI World Imagery XYZ layer under this id at the
+# bottom of the layer tree; the rasters go in right above it.
+BASEMAP_ID = "esri_world_imagery"
+
 project = QgsProject.instance()
 root = project.layerTreeRoot()
 
 # Per-region settings. Project filename suffix (`-AK`, `-CA`, `-SV`)
-# selects which entry to use; see `_detect_region()`.
+# selects which entry to use; see `_detect_region()`. `crs` is the CRS of
+# that region's GeoTIFFs, so the project matches the data natively.
 REGIONS = {
-    "AK": {"crs": "EPSG:3338",   "csv": "S4F_target_AK_RGI_id.csv"},
-    "CA": {"crs": "ESRI:102001", "csv": "S4F_target_CA_RGI_id.csv"},
-    "SV": {"crs": "ESRI:102013", "csv": "S4F_target_SV_RGI_id.csv"},
+    "AK": {"target": "S4F_target_01", "crs": "EPSG:5936"},  # Alaska Polar Stereographic
+    "CA": {"target": "S4F_target_03", "crs": "EPSG:3413"},  # NSIDC Sea Ice Polar Stereographic North
+    "SV": {"target": "S4F_target_07", "crs": "EPSG:3413"},  # NSIDC Sea Ice Polar Stereographic North
 }
+
+# Layer groups to add, in drawing order: the first entry ends up on top, both
+# for the groups and for the layers inside one.
+#   name:    the sub-group as it appears in the layer tree
+#   visible: whether the group starts checked (default True); the layers in
+#            it are always checked, so ticking the group is all it takes
+#   layers:  what goes in it, each one
+#     variable:  the `<target>_<variable>.tif` suffix on S3
+#     label:     the name shown in the layer tree; the layer *id* stays
+#                `<target>_<variable><suffix>` so print layouts can find it
+#     style:     "hillshade", or the colormap `.txt` to build a pseudocolor ramp from
+#     suffix:    appended to the layer id (to tell a hillshade apart from the ramp)
+#     mask_zero: treat 0 as NoData (thickness has 0 outside the ice)
+#     multiply:  composite onto what is below instead of painting over it
+#
+# Each group is a pair: a color ramp multiplied onto its own hillshade, so the
+# shading shows through the colors and every group is self-contained. The
+# groups stack with the derived quantities on top of the geometry they came
+# from; uncheck one to reveal the one below.
+#
+# A group whose first layer is not on S3 for the region is dropped entirely:
+# a hillshade on its own would just be clutter.
+GLACIER_HILLSHADE = {"variable": "surface_clipped", "suffix": "_hs",
+                     "label": "Hillshade (glacier only)", "style": "hillshade"}
+
+GROUPS = [
+    {
+        "name": "ITS_LIVE",
+        "layers": [
+            {"variable": "its_live_v", "label": "v", "style": "colormap_speed.txt",
+             "multiply": True},
+            GLACIER_HILLSHADE,
+        ],
+    },
+    {
+        "name": "dh 2000-2020 (Hugonnet)",
+        "visible": False,
+        "layers": [
+            {"variable": "dh", "label": "dh", "style": "colormap_dh.txt", "multiply": True},
+            GLACIER_HILLSHADE,
+        ],
+    },
+    {
+        # CARRA2 is a regional reanalysis; the COG only exists where the
+        # domain is covered (Alaska so far). Elsewhere the group is skipped.
+        "name": "CARRA2 Snowfall 1990-2019",
+        "visible": False,
+        "layers": [
+            {"variable": "carra2_snowfall_1990_2019", "label": "Snowfall",
+             "style": "colormap_snowfall.txt", "multiply": True},
+            {"variable": "surface", "suffix": "_hs_carra2", "label": "Hillshade",
+             "style": "hillshade"},
+        ],
+    },
+    {
+        "name": "CARRA2 Total Precipitation 1990-2019",
+        "visible": False,
+        "layers": [
+            {"variable": "carra2_precipitation_1990_2019", "label": "Precipitation",
+             "style": "colormap_snowfall.txt", "multiply": True},
+            {"variable": "surface", "suffix": "_hs_carra2p", "label": "Hillshade",
+             "style": "hillshade"},
+        ],
+    },
+    {
+        "name": "Ice Thickness (Maffezzoli)",
+        "visible": False,
+        "layers": [
+            {"variable": "thickness", "label": "Thickness", "style": "colormap_thickness.txt",
+             "mask_zero": True, "multiply": True},
+            GLACIER_HILLSHADE,
+        ],
+    },
+    {
+        "name": "Surface DEM (COP)",
+        "layers": [
+            {"variable": "surface", "label": "Surface", "style": "colormap_dem_topo.txt",
+             "multiply": True},
+            {"variable": "surface", "suffix": "_hs", "label": "Hillshade", "style": "hillshade"},
+        ],
+    },
+    {
+        "name": "Subglacial Topography (Maffezzoli)",
+        "layers": [
+            {"variable": "bed", "label": "Bed", "style": "colormap_dem_bath_topo.txt",
+             "multiply": True},
+            {"variable": "bed", "suffix": "_hs", "label": "Hillshade (subglacial topography)",
+             "style": "hillshade"},
+        ],
+    },
+]
 
 
 def _detect_region():
@@ -58,26 +162,36 @@ def _detect_region():
     return "AK"
 
 
-def _load_rgi_ids(region):
-    """Read the single-column rgi_id CSV for this region."""
-    path = Path(__file__).parent / REGIONS[region]["csv"]
-    with open(path, newline="") as f:
-        return [row["rgi_id"] for row in csv.DictReader(f)]
+def region_files(target):
+    """The GeoTIFF basenames `GROUPS` needs for `target`, in load order.
+
+    `surface_clipped` and `surface` are shared by several groups, so this is
+    shorter than the layer list. Each is `<target>_<variable>.tif` both on
+    S3 (under `<target>/input/`) and in a download folder.
+    """
+    names = []
+    for group_spec in GROUPS:
+        for spec in group_spec["layers"]:
+            name = f"{target}_{spec['variable']}.tif"
+            if name not in names:
+                names.append(name)
+    return names
 
 
-def _get_ramp(name: str, fallback: str = "Spectral"):
-    """Return a color ramp by name from the default style, or a fallback if missing."""
-    ramp = QgsStyle.defaultStyle().colorRamp(name)
-    if ramp is None:
-        print(f"Color ramp '{name}' not found; falling back to '{fallback}'")
-        ramp = QgsStyle.defaultStyle().colorRamp(fallback)
-    if ramp is None:
-        raise RuntimeError(f"Neither '{name}' nor '{fallback}' color ramps are available")
-    return ramp
+def remote_url(target, filename):
+    """Plain HTTPS URL of one of the region's GeoTIFFs."""
+    return f"{BASE_URL}/{target}/input/{filename}"
+
+
+def _uri(target, filename, local_dir):
+    """GDAL source for a GeoTIFF: a local path, or /vsicurl/ over S3."""
+    if local_dir:
+        return str(Path(local_dir) / filename)
+    return f"/vsicurl/{remote_url(target, filename)}"
 
 
 def _load_qgis_colormap(path):
-    """Parse a QGIS-exported color map ``.txt`` file (e.g. ``colormap_dem.txt``).
+    """Parse a QGIS-exported color map ``.txt`` file (e.g. ``colormap_dem_topo.txt``).
 
     The file format is::
 
@@ -112,6 +226,29 @@ def _load_qgis_colormap(path):
     return stops, interp
 
 
+def _unique_id(base):
+    """Return a stable layer id derived from `<target>_<variable><suffix>`.
+
+    QGIS otherwise mints a random UUID per session, so anything that
+    references a layer by id -- the print layouts, most of all -- would break
+    the next time the layers are loaded. `surface_clipped_hs` appears in
+    several groups, hence the counter.
+    """
+    layer_id, n = base, 2
+    while project.mapLayer(layer_id) is not None:
+        layer_id, n = f"{base}_{n}", n + 1
+    return layer_id
+
+
+def _group_layer(group, base):
+    """The layer in `group` whose id came from `base`, or None."""
+    pattern = re.compile(rf"^{re.escape(base)}(_\d+)?$")
+    for child in group.findLayers():
+        if pattern.match(child.layerId()):
+            return child.layer()
+    return None
+
+
 def _apply_bilinear(layer):
     """Enable bilinear resampling on both zoom-in and zoom-out.
 
@@ -130,277 +267,157 @@ def _apply_bilinear(layer):
         rf.setZoomedOutResampler(QgsBilinearRasterResampler())
 
 
-def add_layers():
+def _pseudocolor_renderer(layer, stops, interp):
+    """Build a single-band pseudocolor renderer from parsed colormap stops."""
+    items = [
+        QgsColorRampShader.ColorRampItem(value, QColor(r, g, b, a), label)
+        for value, r, g, b, a, label in stops
+    ]
+    vmin = items[0].value
+    vmax = items[-1].value
 
-    region = _detect_region()
-    rgi_ids = _load_rgi_ids(region)
-    project.setCrs(QgsCoordinateReferenceSystem(REGIONS[region]["crs"]))
-    print(f"load_rgi_layers: region={region}, "
-          f"crs={REGIONS[region]['crs']}, "
-          f"{len(rgi_ids)} glaciers")
+    # Build a gradient ramp from the stops so the legend swatch renders
+    # the full color ramp instead of a flat gray bar.
+    intermediate_stops = [
+        QgsGradientStop((it.value - vmin) / (vmax - vmin), it.color)
+        for it in items[1:-1]
+    ]
+    source_ramp = QgsGradientColorRamp(
+        items[0].color, items[-1].color, False, intermediate_stops
+    )
 
-    # Custom DEM color map for the bed layer (built fresh per layer below).
-    dem_colormap_path = Path(__file__).parent / "colormap_dem.txt"
-    dem_stops, dem_interp = _load_qgis_colormap(dem_colormap_path)
-
-    thickness_colormap_path = Path(__file__).parent / "colormap_thickness.txt"
-    thickness_stops, thickness_interp = _load_qgis_colormap(thickness_colormap_path)
-    
-    top_group = root.findGroup("Glaciers") or root.addGroup("Glaciers")
-    for i, rgi_id in enumerate(rgi_ids):
-        region_str = rgi_id.split("-")[3]
-        region = f"RGI {region_str}"
-        rgi_group = top_group.findGroup(region) or top_group.addGroup(region)
-        group = rgi_group.findGroup(rgi_id) or rgi_group.addGroup(rgi_id)
-
-        v = "thickness"
-
-        name = f"{rgi_id}_{v}"
-        layer_name = name
-        uri = f"/vsis3/{bucket}/{prefix}/{rgi_id}/input/{name}.tif"
-        
-        if any(child.name() == layer_name for child in group.findLayers()):
-            continue
-        
-        layer = QgsRasterLayer(uri, layer_name)
-        if not layer.isValid():
-            print(f"FAIL: {uri}")
-            continue
+    color_ramp_shader = QgsColorRampShader(vmin, vmax, source_ramp, interp)
+    color_ramp_shader.setColorRampItemList(items)
+    shader = QgsRasterShader()
+    shader.setRasterShaderFunction(color_ramp_shader)
+    renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
+    renderer.setClassificationMin(vmin)
+    renderer.setClassificationMax(vmax)
+    return renderer
 
 
-        items = [
-            QgsColorRampShader.ColorRampItem(value, QColor(r, g, b, a), label)
-            for value, r, g, b, a, label in thickness_stops
-        ]
-        vmin = items[0].value
-        vmax = items[-1].value
+def _hillshade_renderer(layer):
+    """Build a multidirectional hillshade renderer for a DEM band."""
+    renderer = QgsHillshadeRenderer(
+        layer.dataProvider(),
+        1,  # band number
+        315.0,  # light azimuth (degrees, 0=N, clockwise)
+        45.0,  # light altitude (degrees above horizon)
+    )
+    renderer.setMultiDirectional(True)
+    renderer.setZFactor(2.0)  # bump if your terrain looks too flat
+    return renderer
 
-        # Build a gradient ramp from the stops so the legend swatch renders
-        # the full color ramp instead of a flat gray bar.
-        intermediate_stops = [
-            QgsGradientStop((it.value - vmin) / (vmax - vmin), it.color)
-            for it in items[1:-1]
-        ]
-        source_ramp = QgsGradientColorRamp(
-            items[0].color, items[-1].color, False, intermediate_stops
-        )
 
-        color_ramp_shader = QgsColorRampShader(vmin, vmax, source_ramp, thickness_interp)
-        color_ramp_shader.setColorRampItemList(items)
-        shader = QgsRasterShader()
-        shader.setRasterShaderFunction(color_ramp_shader)
-        renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
-        renderer.setClassificationMin(vmin)
-        renderer.setClassificationMax(vmax)
-        layer.setRenderer(renderer)
+def _refresh_layout_legends():
+    """Point the saved print layouts' legends at the layers we just added.
 
+    A layout legend with a customized model (ours renames the groups, so it
+    has one) resolves its layer references when the project is read -- long
+    before these layers exist. Without this the legend comes up with empty
+    entries; the layer ids `_unique_id()` hands out are what it looks for.
+    """
+    for layout in project.layoutManager().layouts():
+        for item in layout.items():
+            if isinstance(item, QgsLayoutItemLegend):
+                item.model().rootGroup().resolveReferences(project)
+                item.updateLegend()
+
+
+def _style_layer(layer, spec, colormaps):
+    """Apply the renderer, blend mode, NoData and resampling `spec` asks for.
+
+    Everything here is derived from `spec`, so it can be re-applied after
+    the layer's data source changes (which recreates the data provider and
+    with it the NoData and resampling settings).
+    """
+    if spec["style"] == "hillshade":
+        layer.setRenderer(_hillshade_renderer(layer))
+    else:
+        path = Path(__file__).parent / spec["style"]
+        if spec["style"] not in colormaps:
+            colormaps[spec["style"]] = _load_qgis_colormap(path)
+        layer.setRenderer(_pseudocolor_renderer(layer, *colormaps[spec["style"]]))
+
+    if spec.get("multiply"):
+        layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
+
+    if spec.get("mask_zero"):
         provider = layer.dataProvider()
         provider.setUserNoDataValue(1, [QgsRasterRange(0, 0)])  # band 1, treat 0 as NoData
         provider.setUseSourceNoDataValue(1, True)
-        
-        _apply_bilinear(layer)
-        layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
 
-        layer.triggerRepaint()
-        project.addMapLayer(layer, addToLegend=False)
-        group.addLayer(layer)
-
-        v = "surface_clipped"
-        
-        name = f"{rgi_id}_{v}"
-        layer_name = f"{name}_hs"
-        uri = f"/vsis3/{bucket}/{prefix}/{rgi_id}/input/{name}.tif"
-        
-        if any(child.name() == layer_name for child in group.findLayers()):
-            continue
-        
-        layer = QgsRasterLayer(uri, layer_name)
-        if not layer.isValid():
-            print(f"FAIL: {uri}")
-            continue
-        
-        renderer = QgsHillshadeRenderer(
-            layer.dataProvider(),
-            1,  # band number
-            315.0,  # light azimuth (degrees, 0=N, clockwise)
-            45.0,  # light altitude (degrees above horizon)
-        )
-        renderer.setMultiDirectional(True)
-        renderer.setZFactor(2.0)  # bump if your terrain looks too flat
-        layer.setRenderer(renderer)
-        _apply_bilinear(layer)
-        layer.triggerRepaint()
-        project.addMapLayer(layer, addToLegend=False)
-        group.addLayer(layer)
-
-        v = "bed"
-
-        name = f"{rgi_id}_{v}"
-        layer_name = name
-        uri = f"/vsis3/{bucket}/{prefix}/{rgi_id}/input/{name}.tif"
-        
-        if any(child.name() == layer_name for child in group.findLayers()):
-            continue
-        
-        layer = QgsRasterLayer(uri, layer_name)
-        if not layer.isValid():
-            print(f"FAIL: {uri}")
-            continue
-
-        items = [
-            QgsColorRampShader.ColorRampItem(value, QColor(r, g, b, a), label)
-            for value, r, g, b, a, label in dem_stops
-        ]
-        vmin = items[0].value
-        vmax = items[-1].value
-
-        # Build a gradient ramp from the stops so the legend swatch renders
-        # the full color ramp instead of a flat gray bar.
-        intermediate_stops = [
-            QgsGradientStop((it.value - vmin) / (vmax - vmin), it.color)
-            for it in items[1:-1]
-        ]
-        source_ramp = QgsGradientColorRamp(
-            items[0].color, items[-1].color, False, intermediate_stops
-        )
-
-        color_ramp_shader = QgsColorRampShader(vmin, vmax, source_ramp, dem_interp)
-        color_ramp_shader.setColorRampItemList(items)
-        shader = QgsRasterShader()
-        shader.setRasterShaderFunction(color_ramp_shader)
-        renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
-        renderer.setClassificationMin(vmin)
-        renderer.setClassificationMax(vmax)
-        layer.setRenderer(renderer)
-        _apply_bilinear(layer)
-        layer.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
-        layer.triggerRepaint()
-        project.addMapLayer(layer, addToLegend=False)
-        group.addLayer(layer)
+    _apply_bilinear(layer)
+    layer.triggerRepaint()
 
 
-        v = "bed"
-        
-        name = f"{rgi_id}_{v}"
-        layer_name = f"{name}_hs"
-        uri = f"/vsis3/{bucket}/{prefix}/{rgi_id}/input/{name}.tif"
-        
-        if any(child.name() == layer_name for child in group.findLayers()):
-            continue
-        
-        layer = QgsRasterLayer(uri, layer_name)
-        if not layer.isValid():
-            print(f"FAIL: {uri}")
-            continue
-        
-        renderer = QgsHillshadeRenderer(
-            layer.dataProvider(),
-            1,  # band number
-            315.0,  # light azimuth (degrees, 0=N, clockwise)
-            45.0,  # light altitude (degrees above horizon)
-        )
-        renderer.setMultiDirectional(True)
-        renderer.setZFactor(2.0)  # bump if your terrain looks too flat
-        layer.setRenderer(renderer)
-        
-        # provider = layer.dataProvider()
-        # provider.setUserNoDataValue(1, [QgsRasterRange(0, 0)])  # band 1, treat 0 as NoData
-        # provider.setUseSourceNoDataValue(1, True)
+def add_layers(local_dir=None):
+    """Add every layer in `GROUPS` for the project's region.
 
-        _apply_bilinear(layer)
-        layer.triggerRepaint()
-        project.addMapLayer(layer, addToLegend=False)
-        group.addLayer(layer)
-        
-        # for v in variables:
-        #     uri = f"/vsis3/{bucket}/{prefix}/{rgi_id}/input/{rgi_id}_{v}.tif"
-        #     layer = QgsRasterLayer(uri, f"{rgi_id}_{v}")
-        #     if not layer.isValid():
-        #         print(f"FAIL: {uri}")
-        #         continue
+    With `local_dir`, the GeoTIFFs are read from that folder instead of S3.
+    A layer that is already in the project is kept -- re-pointed at the new
+    source if that differs, so switching between S3 and a download, or to a
+    fresh download, never duplicates anything.
+    """
+    region = _detect_region()
+    target = REGIONS[region]["target"]
+    crs = REGIONS[region]["crs"]
+    project.setCrs(QgsCoordinateReferenceSystem(crs))
+    print(f"load_rgi_layers: region={region}, target={target}, crs={crs}, "
+          f"source={local_dir or 'S3'}")
 
-        #     if v in ("surface_clipped"):
-        #         hs = QgsRasterLayer(uri, f"{rgi_id}_{v}_hs")
-        #         if not hs.isValid():
-        #             print(f"FAIL: {uri}")
-        #             continue
-        #         renderer = QgsHillshadeRenderer(
-        #             hs.dataProvider(),
-        #             1,  # band number
-        #             315.0,  # light azimuth (degrees, 0=N, clockwise)
-        #             45.0,  # light altitude (degrees above horizon)
-        #         )
-        #         renderer.setMultiDirectional(True)
-        #         renderer.setZFactor(2.0)  # bump if your terrain looks too flat
-        #         hs.setRenderer(renderer)
-        #         hs.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
-        #         _apply_bilinear(hs)
-        #         hs.triggerRepaint()
-        #         project.addMapLayer(hs, addToLegend=False)
-        #         group.addLayer(hs)
+    colormaps = {}  # parsed once, reused across layers
+    target_group = root.findGroup(target)
+    if target_group is None:
+        # Above the basemap, which is the bottom of the tree in the projects;
+        # appending would hide every raster underneath the imagery.
+        basemap = root.findLayer(BASEMAP_ID)
+        index = root.children().index(basemap) if basemap else -1
+        target_group = root.insertGroup(index, target)
 
-        #     if v in ("bed"):
-        #         hs = QgsRasterLayer(uri, f"{rgi_id}_{v}_hs")
-        #         if not hs.isValid():
-        #             print(f"FAIL: {uri}")
-        #             continue
-        #         renderer = QgsHillshadeRenderer(
-        #             hs.dataProvider(),
-        #             1,  # band number
-        #             315.0,  # light azimuth (degrees, 0=N, clockwise)
-        #             45.0,  # light altitude (degrees above horizon)
-        #         )
-        #         renderer.setMultiDirectional(True)
-        #         renderer.setZFactor(2.0)  # bump if your terrain looks too flat
-        #         hs.setRenderer(renderer)
-        #         hs.setBlendMode(QPainter.CompositionMode.CompositionMode_Multiply)
-        #         _apply_bilinear(hs)
-        #         hs.triggerRepaint()
-        #         project.addMapLayer(hs, addToLegend=False)
-        #         group.addLayer(hs)
+    for group_spec in GROUPS:
+        # Collapsed by default: four two-layer groups expanded is a wall of
+        # entries, and the group name already says what is in there.
+        group = target_group.findGroup(group_spec["name"])
+        if group is None:
+            group = target_group.addGroup(group_spec["name"])
+            group.setExpanded(False)
+            group.setItemVisibilityChecked(group_spec.get("visible", True))
 
-        #         vmin = -2000
-        #         vmax = 2000
-        #         ramp = oleron_src.clone()
-        #         color_ramp_shader = QgsColorRampShader(vmin, vmax, ramp, QgsColorRampShader.Interpolated)
-        #         color_ramp_shader.classifyColorRamp(classes=10)  # 10 stops; tune as desired
-        #         shader = QgsRasterShader()
-        #         shader.setRasterShaderFunction(color_ramp_shader)
-        #         renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
-        #         layer.setRenderer(renderer)
+        for spec in group_spec["layers"]:
+            variable = spec["variable"]
+            filename = f"{target}_{variable}.tif"
+            base_id = f"{target}_{variable}{spec.get('suffix', '')}"
+            uri = _uri(target, filename, local_dir)
 
-        #         rf = layer.resampleFilter()
-        #         rf.setZoomedInResampler(QgsBilinearRasterResampler())
-        #         rf.setZoomedOutResampler(QgsBilinearRasterResampler())
+            layer = _group_layer(group, base_id)
+            if layer is not None:
+                if layer.source() != uri:
+                    # Same layer, new source: the provider is rebuilt, so
+                    # the style (NoData, resampling) has to be re-applied.
+                    layer.setDataSource(uri, layer.name(), "gdal",
+                                        QgsDataProvider.ProviderOptions())
+                    if layer.isValid():
+                        _style_layer(layer, spec, colormaps)
+                    else:
+                        print(f"FAIL: {uri}")
+                continue
 
+            layer = QgsRasterLayer(uri, spec.get("label", base_id))
+            if not layer.isValid():
+                print(f"FAIL: {uri}")
+                if not group.findLayers():
+                    print(f"load_rgi_layers: skipping group '{group_spec['name']}' "
+                          f"for {target}, no {filename}")
+                    target_group.removeChildNode(group)
+                    break
+                continue
+            layer.setId(_unique_id(base_id))
+            _style_layer(layer, spec, colormaps)
+            project.addMapLayer(layer, addToLegend=False)
+            group.addLayer(layer)
 
-        #         Layer.triggerRepaint()
-        #         project.addMapLayer(layer, addToLegend=False)
-        #         group.addLayer(layer)
-
-        #     else:
-        #         vmin = 0
-        #         vmax = 1250
-        #         ramp = lapaz_src.clone()
-        #         color_ramp_shader = QgsColorRampShader(vmin, vmax, ramp, QgsColorRampShader.Interpolated)
-        #         color_ramp_shader.classifyColorRamp(classes=10)  # 10 stops; tune as desired
-        #         shader = QgsRasterShader()
-        #         shader.setRasterShaderFunction(color_ramp_shader)
-
-        #         renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
-        #         layer.setRenderer(renderer)
-        #         _apply_bilinear(layer)
-
-        #         provider = layer.dataProvider()
-        #         provider.setUserNoDataValue(1, [QgsRasterRange(0, 0)])  # band 1, treat 0 as NoData
-        #         provider.setUseSourceNoDataValue(1, True)
-
-        #         layer.triggerRepaint()
-        #         project.addMapLayer(layer, addToLegend=False)
-        #         group.addLayer(layer)
-
-        if i % 5 == 0:
-            QApplication.processEvents()
+    _refresh_layout_legends()
 
 
 if __name__ == "__main__":
